@@ -13,7 +13,7 @@
     "inlineSources": true,
     "sourceRoot": "/",
     "skipLibCheck": true,
-    "importHelpers": true,
+    "importHelpers": false,
     "lib": ["ES2020"],
     "disableSizeLimit": false,
     "noErrorTruncation": false,
