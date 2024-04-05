@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "declaration": true,
+    "outDir": "./dist",
+    "strict": false,
+    "moduleResolution": "node",
+    "rootDir": "src",
+    "noImplicitAny": false,
+    "esModuleInterop": true,
+    "sourceMap": true,
+    "inlineSources": true,
+    "sourceRoot": "/",
+    "skipLibCheck": true,
+    "importHelpers": true,
+    "lib": ["ES2020"],
+    "disableSizeLimit": false,
+    "noErrorTruncation": false,
+    "pretty": true,
+    "skipDefaultLibCheck": true,
+    "allowJs": true
+  },
+  "ts-node": {
+    "files": true,
+    "transpileOnly": true
+  },
+  "include": ["src"],
+  "exclude": ["node_modules"]
+}
