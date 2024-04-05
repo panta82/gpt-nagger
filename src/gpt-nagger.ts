@@ -16,7 +16,7 @@ const client = new OpenAI({
   apiKey: process.env['OPENAI_API_KEY'],
 });
 
-const INTERVAL = 5000;
+const INTERVAL = 30 * 1000;
 
 const PROMPT_GOAL = process.env.PROMPT_GOAL || 'write scripts';
 const IMAGE_PATH = process.env.IMAGE_PATH || libPath.resolve(__dirname, '../screenshot.png');
@@ -33,33 +33,48 @@ Promise.resolve()
 
 export async function main() {
   let breakTriggered = false;
+  let waitTimeout;
 
   process.on('SIGINT', async () => {
     console.log('Exiting...');
-    breakTriggered = true;
+    clearTimeout(waitTimeout);
+    if (!breakTriggered) {
+      breakTriggered = true;
+    } else {
+      process.exit(1);
+    }
   });
+
+  let previousMessage: string;
 
   while (!breakTriggered) {
     console.log(`\n[${new Date().toISOString()}]\nLet's see how you're doing...`);
 
-    await nag();
+    previousMessage = await nag(previousMessage);
 
     console.log(`Hope that helps!`);
 
-    await new Promise(resolve => setTimeout(resolve, INTERVAL));
+    if (breakTriggered) {
+      break;
+    }
+
+    await new Promise(resolve => {
+      waitTimeout = setTimeout(resolve, INTERVAL);
+    });
   }
 }
 
-async function nag() {
+async function nag(previousMessage?: string) {
   const systemPrompt = `You are a system designed to observe the user's computer usage and help them. 
-One part of help is motivation - ensuring theyre not getting distracted doing the wrong thing - 
+One part of help is motivation - ensuring they're not getting distracted doing the wrong thing - 
 another is making suggestions for whatever task they seem to be doing. 
 SHORT ONE LINE QUIPS BY DEFAULT, the user will specifically ask for details if needed. 
 Think of yourself as the 2ndary in a pair programming scenario, looking over someones shoulder.`;
 
-  const userPrompt = `User is trying to ${PROMPT_GOAL}. Look at their screen and determine what help they might need. 
-Reply with a short quip that should be said out loud to the user.
-If they look like theyre slacking off, gently guide them towards what they might be stuck on.`;
+  let userPrompt = `I am trying to ${PROMPT_GOAL}. Look at my screen and make sure I am not slacking off. If I am, sternly reprimand me and guide me back to the right path. If it looks like I am doing what I should, try to help me out with a short quip.`;
+  if (previousMessage) {
+    userPrompt += ` The last time you said: ${previousMessage}`;
+  }
 
   await exec(`${SCREEN_CAPTURE_CMD} ${IMAGE_PATH}`);
 
@@ -90,15 +105,21 @@ If they look like theyre slacking off, gently guide them towards what they might
 
   console.log('Nagging...');
 
+  const message = result.choices[0].message.content;
+
+  console.log('---\n' + message + '\n---');
+
   const voiceResponse = await client.audio.speech.create({
-    voice: 'onyx',
-    input: result.choices[0].message.content,
+    voice: 'nova',
+    input: message,
     model: 'tts-1',
   });
   const buffer = Buffer.from(await voiceResponse.arrayBuffer());
   await fs.promises.writeFile(SPEECH_PATH, buffer);
 
   await exec(`${PLAY_SPEECH_CMD} ${SPEECH_PATH}`);
+
+  return message;
 }
 
 const encodeImage = async (imagePath: string): Promise<string> => {
