@@ -3,6 +3,8 @@
 import fs from 'fs';
 import libPath from 'path';
 
+import Moment from 'moment';
+
 import OpenAI from 'openai';
 import dotenv from 'dotenv';
 
@@ -45,14 +47,18 @@ export async function main() {
     }
   });
 
-  let previousMessage: string;
+  let previousNags: INag[] = [];
 
   while (!breakTriggered) {
     console.log(`\n[${new Date().toISOString()}]\nLet's see how you're doing...`);
 
-    previousMessage = await nag(previousMessage);
-
-    console.log(`Hope that helps!`);
+    const [text, screenshotDataUri] = await performNag(previousNags);
+    if (text) {
+      previousNags.push({ text, screenshotDataUri, date: new Date() });
+      if (previousNags.length > 3) {
+        previousNags = previousNags.slice(-3);
+      }
+    }
 
     if (breakTriggered) {
       break;
@@ -64,23 +70,33 @@ export async function main() {
   }
 }
 
-async function nag(previousMessage?: string) {
-  const systemPrompt = `You are a system designed to observe the user's computer usage and help them. 
-One part of help is motivation - ensuring they're not getting distracted doing the wrong thing - 
-another is making suggestions for whatever task they seem to be doing. 
-SHORT ONE LINE QUIPS BY DEFAULT, the user will specifically ask for details if needed. 
-Think of yourself as the 2ndary in a pair programming scenario, looking over someones shoulder.`;
+async function performNag(
+  previousNags?: INag[]
+): Promise<[message: string, screenshotDataUri: string]> {
+  const systemPrompt = `You are a system designed to observe the user's computer usage and help them STAY FOCUSED on the task at hand.
+Imagine your voice coming from a strict but fair teacher, keeping the class in check. Communication short and to the point. SHORT ONE LINE QUIPS BY DEFAULT.
+First gentle, but more strict if they don't improve. Cursing allowed.`;
 
-  let userPrompt = `I am trying to ${PROMPT_GOAL}. Look at my screen and make sure I am not slacking off. If I am, sternly reprimand me and guide me back to the right path. If it looks like I am doing what I should, try to help me out with a short quip.`;
-  if (previousMessage) {
-    userPrompt += ` The last time you said: ${previousMessage}`;
-  }
+  const userPrompt = [
+    `I am trying to ${PROMPT_GOAL}.`,
+    previousNags?.length
+      ? `Here is my CURRENT screen (1st image) and my PREVIOUS screen (2nd image).`
+      : `Here is my screen.`,
+    `Look at ${previousNags?.length ? 'them' : 'it'} and make sure I am working on my task.`,
+    'Forbidden activities involve twitter, video games and other distractions.',
+    previousNags?.length &&
+      `If my CURRENT screen is very similar to the PREVIOUS screen, I might be drifting off!`,
+    `If I am doing well, say EXACTLY "Good boy".`,
+    `Otherwise reprimand me. Take into account previous warnings and times, and escalate as needed.`,
+  ]
+    .filter(Boolean)
+    .join('\n');
 
   await exec(`${SCREEN_CAPTURE_CMD} ${IMAGE_PATH}`);
 
   console.log('Analyzing...');
 
-  const base64_image = await encodeImage(IMAGE_PATH);
+  const dataUriScreenshot = await encodeImage(IMAGE_PATH);
   const result = await client.chat.completions.create({
     model: 'gpt-4-vision-preview',
     messages: [
@@ -88,17 +104,32 @@ Think of yourself as the 2ndary in a pair programming scenario, looking over som
         role: 'system',
         content: systemPrompt,
       },
+      ...previousNags
+        .filter(nag => !!nag.text)
+        .map(
+          nag =>
+            ({
+              role: 'assistant',
+              content: `[${Moment().fromNow()}] ${nag.text}`,
+            }) as const
+        ),
       {
         role: 'user',
         content: [
-          { type: 'text', text: userPrompt },
           {
             type: 'image_url',
             image_url: {
-              url: `data:image/jpeg;base64,${base64_image}`,
+              url: dataUriScreenshot,
             },
           },
-        ],
+          previousNags?.length && {
+            type: 'image_url',
+            image_url: {
+              url: previousNags[previousNags.length - 1].screenshotDataUri,
+            },
+          },
+          { type: 'text', text: userPrompt },
+        ].filter(Boolean) as any,
       },
     ],
   });
@@ -108,6 +139,10 @@ Think of yourself as the 2ndary in a pair programming scenario, looking over som
   const message = result.choices[0].message.content;
 
   console.log('---\n' + message + '\n---');
+
+  if (/GOOD\sBOY/i.test(message)) {
+    return [null, dataUriScreenshot];
+  }
 
   const voiceResponse = await client.audio.speech.create({
     voice: 'nova',
@@ -119,10 +154,17 @@ Think of yourself as the 2ndary in a pair programming scenario, looking over som
 
   await exec(`${PLAY_SPEECH_CMD} ${SPEECH_PATH}`);
 
-  return message;
+  return [message, dataUriScreenshot];
 }
 
 const encodeImage = async (imagePath: string): Promise<string> => {
   const bitmap = fs.readFileSync(imagePath);
-  return Buffer.from(bitmap).toString('base64');
+  const content = Buffer.from(bitmap).toString('base64');
+  return `data:image/png;base64,${content}`;
 };
+
+interface INag {
+  date: Date;
+  text: string;
+  screenshotDataUri: string;
+}
