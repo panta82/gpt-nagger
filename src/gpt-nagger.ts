@@ -10,6 +10,7 @@ import dotenv from 'dotenv';
 
 import { exec as execCb } from 'child_process';
 import { promisify } from 'util';
+import { ChatCompletionContentPart } from 'openai/src/resources/chat/completions';
 const exec = promisify(execCb);
 
 dotenv.config();
@@ -18,8 +19,7 @@ const client = new OpenAI({
   apiKey: process.env['OPENAI_API_KEY'],
 });
 
-const INTERVAL = 30 * 1000;
-
+const INTERVAL = isNaN(parseInt(process.env.INTERVAL)) ? 30 * 1000 : parseInt(process.env.INTERVAL);
 const PROMPT_GOAL = process.env.PROMPT_GOAL || 'write scripts';
 const IMAGE_PATH = process.env.IMAGE_PATH || libPath.resolve(__dirname, '../screenshot.png');
 const SPEECH_PATH = process.env.SPEECH_PATH || libPath.resolve(__dirname, '../speech.mp3');
@@ -74,23 +74,38 @@ async function performNag(
   previousNags?: INag[]
 ): Promise<[message: string, screenshotDataUri: string]> {
   const systemPrompt = `You are a system designed to observe the user's computer usage and help them STAY FOCUSED on the task at hand.
-Imagine your voice coming from a strict but fair teacher, keeping the class in check. Communication short and to the point. SHORT ONE LINE QUIPS BY DEFAULT.
-First gentle, but more strict if they don't improve. Cursing allowed.`;
+Imagine your voice coming from a strict but fair teacher, keeping the class in check.
+Communication short and to the point. SHORT ONE LINE QUIPS BY DEFAULT.
+First gentle, but more strict if the behaviour doesn't improve. Cursing allowed.`;
 
-  const userPrompt = [
+  const currentPrompt = [
     `I am trying to ${PROMPT_GOAL}.`,
-    previousNags?.length
-      ? `Here is my CURRENT screen (1st image) and my PREVIOUS screen (2nd image).`
-      : `Here is my screen.`,
-    `Look at ${previousNags?.length ? 'them' : 'it'} and make sure I am working on my task.`,
-    'Forbidden activities involve twitter, video games and other distractions.',
-    previousNags?.length &&
-      `If my CURRENT screen is very similar to the PREVIOUS screen, I might be drifting off!`,
+    `Here is my CURRENT screen.`,
+    `Look at it and make sure I am working on my task.`,
+    'Forbidden activities involve twitter, x.com, video games and other distractions.',
     `If I am doing well, say EXACTLY "Good boy".`,
     `Otherwise reprimand me. Take into account previous warnings and times, and escalate as needed.`,
   ]
     .filter(Boolean)
     .join('\n');
+
+  // Doesn't work, it doesn't understand what to do :(
+  // const compareInstructions: ChatCompletionContentPart[] = previousNags?.length
+  //   ? [
+  //       {
+  //         type: 'text',
+  //         text: [
+  //           `Also, here is my screen from ${Moment(previousNags[previousNags.length - 1].date).fromNow()}. Compare with the CURRENT screen. If they are similar, I might be drifting off!`,
+  //         ].join('\n'),
+  //       },
+  //       {
+  //         type: 'image_url',
+  //         image_url: {
+  //           url: previousNags[previousNags.length - 1].screenshotDataUri,
+  //         },
+  //       },
+  //     ]
+  //   : [];
 
   await exec(`${SCREEN_CAPTURE_CMD} ${IMAGE_PATH}`);
 
@@ -110,26 +125,24 @@ First gentle, but more strict if they don't improve. Cursing allowed.`;
           nag =>
             ({
               role: 'assistant',
-              content: `[${Moment().fromNow()}] ${nag.text}`,
+              content: `[${Moment(nag.date).fromNow()}] ${nag.text}`,
             }) as const
         ),
       {
         role: 'user',
         content: [
           {
+            type: 'text',
+            text: currentPrompt,
+          },
+          {
             type: 'image_url',
             image_url: {
               url: dataUriScreenshot,
             },
           },
-          previousNags?.length && {
-            type: 'image_url',
-            image_url: {
-              url: previousNags[previousNags.length - 1].screenshotDataUri,
-            },
-          },
-          { type: 'text', text: userPrompt },
-        ].filter(Boolean) as any,
+          //...compareInstructions,
+        ],
       },
     ],
   });
@@ -140,7 +153,7 @@ First gentle, but more strict if they don't improve. Cursing allowed.`;
 
   console.log('---\n' + message + '\n---');
 
-  if (/GOOD\sBOY/i.test(message)) {
+  if (/GOOD\s+BOY/i.test(message)) {
     return [null, dataUriScreenshot];
   }
 
